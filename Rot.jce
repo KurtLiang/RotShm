@@ -1,0 +1,285 @@
+module Comm
+{
+    struct StringRobjOption
+    {
+        0 optional byte set_if_not_exist;
+        1 optional byte set_if_exist;
+        2 optional byte set_expire;
+        3 optional long expire_time;  /* in seconds */
+    };
+
+    struct ListRobjOption
+    {
+        0 optional byte set_if_exist;
+    };
+
+    struct ZsetRobjOption
+    {
+        0 optional byte set_if_not_exist;  /* NX */
+        1 optional byte set_if_exist;      /* XX */
+    };
+
+    struct ZsetScoreMember
+    {
+        0 optional double score;
+        1 optional string member;
+    };
+
+    struct ZsetRangeOption
+    {
+        0 optional byte reverse;
+        1 optional byte with_scores;
+    };
+
+    enum EListDirection
+    {
+        ELIST_HEAD = 0,
+        ELIST_TAIL = 1
+    };
+
+
+    interface Rot
+    {
+        int getAppName(int appId, out string appName);
+
+        /*******************************************************/
+        /*                 String                              */
+        /*******************************************************/
+
+        /**
+         * @brief  SET key value
+         */
+        int set(int appId, string sK, string sV, StringRobjOption opt);
+
+        /**
+         * @brief  MSET key value [key value...]
+         */
+        int mset(int appId, map<string, string> mKVs, int if_not_exist);
+
+        /**
+         * @brief  GET key
+         */
+        int get(int appId, string sK, out string sV);
+
+        /**
+         * @brief  MGET key [key...]
+         */
+        int mget(int appId, vector<string> vKs, out map<string, string> mKVs);
+
+        /**
+         * @breif  INCRBY key incr
+         * @return 0 on success, otherwise -1 if the corresponding value
+                     is not an ingerger.
+         */
+        int incrby(int appId, string sK, long incr, out long result);
+
+        /**
+         * @brief INCRBYFLAOT key incr
+         */
+        int incrbyfloat(int appId, string sK, double incr, out double result);
+
+        /**
+         * @brief APPEND KEY VALUE
+         */
+        int append(int appId, string sK, string sV);
+
+        /*******************************************************/
+        /*                 List                                */
+        /*******************************************************/
+
+        /**
+         * @brief LPUSH/RPUSH/LPUSHX/RPUSHX
+         */
+        int push(int appId, string sK, vector<string> vItems,  EListDirection dir, ListRobjOption opt, out long length);
+
+        /**
+         * @brief LPOP/RPOP
+         */
+        int pop(int appId, string sK, EListDirection dir, out string sItem);
+
+        /**
+         * @brief LINDEX key index
+         */
+        int lindex(int appId, string sK, long index, out string sV);
+
+        /**
+         * @brief LSET key index value
+         */
+        int lset(int appId, string sK, long index, string sV);
+
+        /**
+         * @brief LLEN key
+         */
+        int llen(int appId, string sK, out long length);
+
+        /**
+         *  @brief LREM key count value
+         *         remove 'count' times of values from the list.
+         *
+         *  @param  toremove    >0: remove them from the head.
+         *                      <0: remove them from the tail
+         *                      =0: remove all
+         */
+        int lrem(int appId, string sK, long toremove, string sV, out long removed);
+
+        /**
+         * @brief LRANGE key start stop #[stop] is included
+         */
+        int lrange(int appId, string sK, long start, long end, out vector<string> vItems);
+
+
+        /*******************************************************/
+        /*                 Hash                                */
+        /*******************************************************/
+
+        /**
+         * @brief HMSET key field value [field value...]
+         */
+        int hmset(int appId, string sK, map<string, string> mFV);
+
+        /**
+         * @brief HMGET key field [field...]
+         */
+        int hmget(int appId, string sK, vector<string> vFields, out map<string, string> mFV);
+
+        /**
+         * @brief HGETALL key
+         */
+        int hgetall(int appId, string sK, out map <string, string> mFV);
+
+        /**
+         * @brief HEXISTS key field
+         */
+        int hexists(int appId, string sK, string sField, out int exist_res);
+
+        /**
+         * @brief HDEL key field [field...]
+         */
+        int hdel(int appId, string sK, vector<string> vFields);
+
+        /*******************************************************/
+        /*                 Set                                 */
+        /*******************************************************/
+
+        /**
+         * @brief SADD key member [member...]
+         */
+        int sadd(int appId, string sK, vector<string> vMembers);
+
+        /**
+         * @brief SREM key memgber [member...]
+         */
+        int srem(int appId, string sK, vector<string> vMembers);
+
+        /**
+         * @brief SPOP key [count]
+         */
+        int spop(int appId, string sK, long count, out vector<string> vMembers);
+
+        /**
+         * @brief SISMEMBER key member
+         */
+        int sismember(int appId, string sK, string sMember, out int is_mem);
+
+        /**
+         * @brief SMEMBERS key
+         */
+        int smembers(int appId, string sK, out vector<string> vMembers);
+
+        /**
+         * @brief SINTER/SINTERSTORE key [key...]
+         * @param   storeKey    where to store the results if not empty, otherwise output to vResults.
+         * @param   vResults    output the results to it if storeKey is empty
+         */
+        int sinter(int appId, vector<string> vK, string storeKey, out vector<string> vResults);
+
+        /**
+         * @brief SDIFF/SDIFFSTORE key [key...]
+         *        difference result of first set from other sets.
+         * @param   storeKey    where to store the results if not empty, otherwise output to vResults.
+         * @param   vResults    output the results to it if storeKey is empty
+         */
+        int sdiff(int appId, vector<string> vK, string storeKey, out vector<string> vResults);
+
+        /**
+         * @brief SUNION/SUNIONSTORE key [key...]
+         * @param   storeKey    where to store the results if not empty, otherwise output to vResults.
+         * @param   vResults    output the results to it if storeKey is empty
+         */
+        int sunion(int appId, vector<string> vK, string storeKey, out vector<string> vResults);
+
+
+        /*******************************************************/
+        /*                 Zset                                */
+        /*******************************************************/
+
+        /**
+         * @brief ZDD key score member [score member...]
+         */
+        int zadd(int appId, string sK, vector<ZsetScoreMember> vScoreMember, ZsetRobjOption option);
+
+        /**
+         * @brief ZREM key member [member...]
+         */
+        int zrem(int appId, string sK, vector<string> vMembers);
+
+        /**
+         * @brief ZRANK/ZREVRANK key member
+         *
+         * @param reverse      0 rank order by asc
+         *                     1 rank order by desc
+         * @param rank         zero-based
+         */
+        int zrank(int appId, string sK, string sMember, int reverse, out long rank);
+
+        /**
+         * @brief ZINCRBY key increment member
+         * @param new_score     output new score
+         */
+        int zincrby(int appId, string sK, double increment, string sMember, out double new_score);
+
+        /**
+         * @brief ZRANGE key start end
+         */
+        int zrange(int appId, string sK, long start, long end, ZsetRangeOption opt, out vector<ZsetScoreMember> vScoreMembers);
+
+        /*******************************************************/
+        /*                 General                             */
+        /*******************************************************/
+
+        /**
+         * @brief DEL key [key...]
+         *        ignore it if key doesn't exist
+         * @number  number of keys deleted
+         */
+        int del(int appId, vector<string> vKs, out long deleted);
+
+        /**
+         * @brief EXISTS key [key...]
+         * @param  existed  output number of keys exists
+         */
+        int exists(int appId, vector<string> vKs, out long existed);
+
+        /**
+         * @brief EXPIRE key seconds
+         * @param seconds   make it persistent if -1
+         */
+        int expire(int appId, string sK, long seconds);
+
+        /**
+         * @brief TTL key
+         * @param seconds >=0 remaining seconds to expire
+         *                -1 if persistent
+         *                -2 if not existed or expired
+         */
+        int ttl(int appId, string sK, out long seconds);
+
+        /*******************************************************/
+        /*                 DEBUG                               */
+        /*******************************************************/
+        /**
+         * @brief KEYS *
+         */
+        int keys(int appId, out map<string, string> mKeyTypes);
+    };
+};
