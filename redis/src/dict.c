@@ -158,17 +158,18 @@ unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len) {
  * NOTE: This function should only be called by ht_destroy(). */
 static void _dictReset(dictht *ht)
 {
-    ht->table = NULL;
-    ht->size = 0;
+    ht->table    = NULL;
+    ht->table_yy = 0;
+    ht->size     = 0;
     ht->sizemask = 0;
-    ht->used = 0;
+    ht->used     = 0;
 }
 
 /* Create a new hash table */
 dict *dictCreate(dictType *type,
         void *privDataPtr)
 {
-    dict *d = (dict*)zmalloc(sizeof(*d));
+    dict *d = rot_cast<dict*>(rot_zmalloc(sizeof(*d)));
 
     _dictInit(d,type,privDataPtr);
     return d;
@@ -217,7 +218,8 @@ int dictExpand(dict *d, unsigned long size)
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
     n.sizemask = realsize-1;
-    n.table = (dictEntry**)zcalloc(realsize*sizeof(dictEntry*));
+    n.table_yy = rot_zcalloc(realsize*sizeof(size_t*));
+    n.table    = rot_cast<int64_t*>(n.table_yy);
     n.used = 0;
 
     /* Is this the first initialization? If so it's not really a rehashing
@@ -252,31 +254,31 @@ int dictRehash(dict *d, int n) {
         /* Note that rehashidx can't overflow as we are sure there are more
          * elements because ht[0].used != 0 */
         assert(d->ht[0].size > (unsigned long)d->rehashidx);
-        while(d->ht[0].table[d->rehashidx] == NULL) {
+        while(d->ht[0].table[d->rehashidx] == 0) {
             d->rehashidx++;
             if (--empty_visits == 0) return 1;
         }
-        de = d->ht[0].table[d->rehashidx];
+        de = rot_cast<dictEntry*>(d->ht[0].table[d->rehashidx]);
         /* Move all the keys in this bucket from the old to the new hash HT */
         while(de) {
             unsigned int h;
 
-            nextde = de->next;
+            nextde = rot_cast<dictEntry*>(de->next);
             /* Get the index in the new hash table */
-            h = dictHashKey(d, de->key) & d->ht[1].sizemask;
+            h = dictHashKey(d, RCASTV(de->key)) & d->ht[1].sizemask;
             de->next = d->ht[1].table[h];
-            d->ht[1].table[h] = de;
+            d->ht[1].table[h] = rot_addr(de);
             d->ht[0].used--;
             d->ht[1].used++;
             de = nextde;
         }
-        d->ht[0].table[d->rehashidx] = NULL;
+        d->ht[0].table[d->rehashidx] = 0;
         d->rehashidx++;
     }
 
     /* Check if we already rehashed the whole table... */
     if (d->ht[0].used == 0) {
-        zfree(d->ht[0].table);
+        rot_zfree(d->ht[0].table_yy);
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
         d->rehashidx = -1;
@@ -361,9 +363,10 @@ dictEntry *dictAddRaw(dict *d, void *key)
      * system it is more likely that recently added entries are accessed
      * more frequently. */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-    entry = (dictEntry*)zmalloc(sizeof(*entry));
+    auto entry_yy = rot_zmalloc(sizeof(*entry));
+    entry = rot_cast<dictEntry*>(entry_yy);
     entry->next = ht->table[index];
-    ht->table[index] = entry;
+    ht->table[index] = rot_addr(entry);
     ht->used++;
 
     /* Set the hash entry fields. */
@@ -383,6 +386,7 @@ int dictReplace(dict *d, void *key, void *val)
      * does not exists dictAdd will suceed. */
     if (dictAdd(d, key, val) == DICT_OK)
         return 1;
+
     /* It already exists, get the entry */
     entry = dictFind(d, key);
     /* Set the new value and free the old one. Note that it is important
@@ -421,10 +425,11 @@ static int dictGenericDelete(dict *d, const void *key, int nofree)
 
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[table].sizemask;
-        he = d->ht[table].table[idx];
+        he = rot_cast<dictEntry*>(d->ht[table].table[idx]);
+
         prevHe = NULL;
         while(he) {
-            if (key==he->key || dictCompareKeys(d, key, he->key)) {
+            if (key==RCASTV(he->key) || dictCompareKeys(d, key, RCASTV(he->key))) {
                 /* Unlink the element from the list */
                 if (prevHe)
                     prevHe->next = he->next;
@@ -434,12 +439,12 @@ static int dictGenericDelete(dict *d, const void *key, int nofree)
                     dictFreeKey(d, he);
                     dictFreeVal(d, he);
                 }
-                zfree(he);
+                rot_zfree(rot_addr(he));
                 d->ht[table].used--;
                 return DICT_OK;
             }
             prevHe = he;
-            he = he->next;
+            he = rot_cast<dictEntry*>(he->next);
         }
         if (!dictIsRehashing(d)) break;
     }
@@ -460,22 +465,24 @@ int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
 
     /* Free all the elements */
     for (i = 0; i < ht->size && ht->used > 0; i++) {
-        dictEntry *he, *nextHe;
+        dictEntry *he;
+        int64_t nextHe;
 
         if (callback && (i & 65535) == 0) callback(d->privdata);
 
-        if ((he = ht->table[i]) == NULL) continue;
+        if (ht->table[i] == 0) continue;
+        he = rot_cast<dictEntry*>(ht->table[i]);
         while(he) {
             nextHe = he->next;
             dictFreeKey(d, he);
             dictFreeVal(d, he);
-            zfree(he);
+            rot_zfree(rot_addr(he));
             ht->used--;
-            he = nextHe;
+            he = rot_cast<dictEntry*>(nextHe);
         }
     }
     /* Free the table and the allocated cache structure */
-    zfree(ht->table);
+    rot_zfree(ht->table_yy);
     /* Re-initialize the table */
     _dictReset(ht);
     return DICT_OK; /* never fails */
@@ -486,7 +493,7 @@ void dictRelease(dict *d)
 {
     _dictClear(d,&d->ht[0],NULL);
     _dictClear(d,&d->ht[1],NULL);
-    zfree(d);
+    rot_zfree(rot_addr(d));
 }
 
 dictEntry *dictFind(dict *d, const void *key)
@@ -499,11 +506,11 @@ dictEntry *dictFind(dict *d, const void *key)
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[table].sizemask;
-        he = d->ht[table].table[idx];
+        he = rot_cast<dictEntry*>(d->ht[table].table[idx]);
         while(he) {
-            if (key==he->key || dictCompareKeys(d, key, he->key))
+            if (key==RCASTV(he->key) || dictCompareKeys(d, key, RCASTV(he->key)))
                 return he;
-            he = he->next;
+            he = rot_cast<dictEntry*>(he->next);
         }
         if (!dictIsRehashing(d)) return NULL;
     }
@@ -557,7 +564,7 @@ long long dictFingerprint(dict *d) {
 
 dictIterator *dictGetIterator(dict *d)
 {
-    dictIterator *iter = (dictIterator*)zmalloc(sizeof(*iter));
+    dictIterator *iter = rot_cast<dictIterator*>(rot_zmalloc(sizeof(*iter)));
 
     iter->d = d;
     iter->table = 0;
@@ -596,14 +603,14 @@ dictEntry *dictNext(dictIterator *iter)
                     break;
                 }
             }
-            iter->entry = ht->table[iter->index];
+            iter->entry = rot_cast<dictEntry*>(ht->table[iter->index]);
         } else {
             iter->entry = iter->nextEntry;
         }
         if (iter->entry) {
             /* We need to save the 'next' here, the iterator user
              * may delete the entry we are returning. */
-            iter->nextEntry = iter->entry->next;
+            iter->nextEntry = rot_cast<dictEntry*>(iter->entry->next);
             return iter->entry;
         }
     }
@@ -618,7 +625,7 @@ void dictReleaseIterator(dictIterator *iter)
         else
             assert(iter->fingerprint == dictFingerprint(iter->d));
     }
-    zfree(iter);
+    rot_zfree(rot_addr(iter));
 }
 
 /* Return a random entry from the hash table. Useful to
@@ -638,13 +645,14 @@ dictEntry *dictGetRandomKey(dict *d)
             h = d->rehashidx + (random() % (d->ht[0].size +
                                             d->ht[1].size -
                                             d->rehashidx));
-            he = (h >= d->ht[0].size) ? d->ht[1].table[h - d->ht[0].size] :
-                                      d->ht[0].table[h];
+            he = (h >= d->ht[0].size) ?
+                                    rot_cast<dictEntry*>(d->ht[1].table[h - d->ht[0].size]):
+                                    rot_cast<dictEntry*>(d->ht[0].table[h]);
         } while(he == NULL);
     } else {
         do {
             h = random() & d->ht[0].sizemask;
-            he = d->ht[0].table[h];
+            he = rot_cast<dictEntry*>(d->ht[0].table[h]);
         } while(he == NULL);
     }
 
@@ -655,12 +663,12 @@ dictEntry *dictGetRandomKey(dict *d)
     listlen = 0;
     orighe = he;
     while(he) {
-        he = he->next;
+        he = rot_cast<dictEntry*>(he->next);
         listlen++;
     }
     listele = random() % listlen;
     he = orighe;
-    while(listele--) he = he->next;
+    while(listele--) he = rot_cast<dictEntry*>(he->next);
     return he;
 }
 
@@ -725,7 +733,7 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
                 continue;
             }
             if (i >= d->ht[j].size) continue; /* Out of range for this table. */
-            dictEntry *he = d->ht[j].table[i];
+            dictEntry *he = rot_cast<dictEntry*>(d->ht[j].table[i]);
 
             /* Count contiguous empty buckets, and jump to other
              * locations if they reach 'count' (with a minimum of 5). */
@@ -742,7 +750,7 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
                      * empty while iterating. */
                     *des = he;
                     des++;
-                    he = he->next;
+                    he = rot_cast<dictEntry*>(he->next);
                     stored++;
                     if (stored == count) return stored;
                 }
@@ -865,10 +873,10 @@ unsigned long dictScan(dict *d,
         m0 = t0->sizemask;
 
         /* Emit entries at cursor */
-        de = t0->table[v & m0];
+        de = rot_cast<dictEntry*>(t0->table[v & m0]);
         while (de) {
             fn(privdata, de);
-            de = de->next;
+            de = rot_cast<dictEntry*>(de->next);
         }
 
     } else {
@@ -885,20 +893,20 @@ unsigned long dictScan(dict *d,
         m1 = t1->sizemask;
 
         /* Emit entries at cursor */
-        de = t0->table[v & m0];
+        de = rot_cast<dictEntry*>(t0->table[v & m0]);
         while (de) {
             fn(privdata, de);
-            de = de->next;
+            de = rot_cast<dictEntry*>(de->next);
         }
 
         /* Iterate over indices in larger table that are the expansion
          * of the index pointed to by the cursor in the smaller table */
         do {
             /* Emit entries at cursor */
-            de = t1->table[v & m1];
+            de = rot_cast<dictEntry*>(t1->table[v & m1]);
             while (de) {
                 fn(privdata, de);
-                de = de->next;
+                de = rot_cast<dictEntry*>(de->next);
             }
 
             /* Increment bits not covered by the smaller mask */
@@ -976,11 +984,11 @@ static int _dictKeyIndex(dict *d, const void *key)
     for (table = 0; table <= 1; table++) {
         idx = h & d->ht[table].sizemask;
         /* Search if this slot does not already contain the given key */
-        he = d->ht[table].table[idx];
+        he = rot_cast<dictEntry*>(d->ht[table].table[idx]);
         while(he) {
-            if (key==he->key || dictCompareKeys(d, key, he->key))
+            if (key==RCASTV(he->key) || dictCompareKeys(d, key, RCASTV(he->key)))
                 return -1;
-            he = he->next;
+            he = rot_cast<dictEntry*>(he->next);
         }
         if (!dictIsRehashing(d)) break;
     }
@@ -1021,17 +1029,17 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     for (i = 0; i < ht->size; i++) {
         dictEntry *he;
 
-        if (ht->table[i] == NULL) {
+        if (ht->table[i] == 0) {
             clvector[0]++;
             continue;
         }
         slots++;
         /* For each hash entry on this slot... */
         chainlen = 0;
-        he = ht->table[i];
+        he = rot_cast<dictEntry*>(ht->table[i]);
         while(he) {
             chainlen++;
-            he = he->next;
+            he = RCAST<dictEntry*>(he->next);
         }
         clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
         if (chainlen > maxchainlen) maxchainlen = chainlen;

@@ -50,14 +50,14 @@
 #define DICT_NOTUSED(V) ((void) V)
 
 typedef struct dictEntry {
-    void *key;
+    int64_t key;
     union {
-        void *val;
+        int64_t  val;
         uint64_t u64;
-        int64_t s64;
-        double d;
+        int64_t  s64;
+        double   d;
     } v;
-    struct dictEntry *next;
+    int64_t next;
 } dictEntry;
 
 typedef struct dictType {
@@ -72,7 +72,9 @@ typedef struct dictType {
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
-    dictEntry **table;
+    int64_t      *table;   /* raw pointer */
+    int64_t       table_yy;
+
     unsigned long size;
     unsigned long sizemask;
     unsigned long used;
@@ -107,13 +109,13 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 /* ------------------------------- Macros ------------------------------------*/
 #define dictFreeVal(d, entry) \
     if ((d)->type->valDestructor) \
-        (d)->type->valDestructor((d)->privdata, (entry)->v.val)
+        (d)->type->valDestructor((d)->privdata, RCASTV((entry)->v.val))
 
 #define dictSetVal(d, entry, _val_) do { \
     if ((d)->type->valDup) \
-        entry->v.val = (d)->type->valDup((d)->privdata, _val_); \
+        entry->v.val = RADDR((d)->type->valDup((d)->privdata, _val_)); \
     else \
-        entry->v.val = (_val_); \
+        entry->v.val = RADDR(_val_); \
 } while(0)
 
 #define dictSetSignedIntegerVal(entry, _val_) \
@@ -127,13 +129,13 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 
 #define dictFreeKey(d, entry) \
     if ((d)->type->keyDestructor) \
-        (d)->type->keyDestructor((d)->privdata, (entry)->key)
+        (d)->type->keyDestructor((d)->privdata, RCASTV((entry)->key))
 
 #define dictSetKey(d, entry, _key_) do { \
     if ((d)->type->keyDup) \
-        entry->key = (d)->type->keyDup((d)->privdata, _key_); \
+        entry->key = RADDR((d)->type->keyDup((d)->privdata, _key_)); \
     else \
-        entry->key = (_key_); \
+        entry->key = RADDR((_key_)); \
 } while(0)
 
 #define dictCompareKeys(d, key1, key2) \
@@ -143,7 +145,7 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 
 #define dictHashKey(d, key) (d)->type->hashFunction(key)
 #define dictGetKey(he) ((he)->key)
-#define dictGetVal(he) ((he)->v.val)
+#define dictGetVal(he) RCASTV((he)->v.val)
 #define dictGetSignedIntegerVal(he) ((he)->v.s64)
 #define dictGetUnsignedIntegerVal(he) ((he)->v.u64)
 #define dictGetDoubleVal(he) ((he)->v.d)

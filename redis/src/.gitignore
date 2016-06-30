@@ -1,6 +1,7 @@
 *.gcda
 *.gcno
 *.gcov
+*.o
 libredis.a
 redis.info
 lcov-html

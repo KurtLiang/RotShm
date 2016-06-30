@@ -1,3 +1,4 @@
+#ifndef REDIS_NO_RDB
 /* zmalloc - total amount of allocated memory aware version of malloc()
  *
  * Copyright (c) 2009-2010, Salvatore Sanfilippo <antirez at gmail dot com>
@@ -70,6 +71,31 @@ void *zcalloc(size_t size);
 void *zrealloc(void *ptr, size_t size);
 void zfree(void *ptr);
 char *zstrdup(const char *s);
+
+size_t rot_zmalloc(size_t size);
+size_t rot_zcalloc(size_t size);
+size_t rot_zrealloc(size_t iAddr, size_t size);
+void   rot_zfree(size_t addr);
+void   rot_zfree_p(void *ptr);
+size_t rot_zstrdup(const char *);
+
+
+extern void *rotHdr;  //TODO @Kurt }
+//#define rot_cast(type, iAddr)     ((type)((char*)rotHdr + (iAddr)))
+
+template<class T>
+inline T       rot_cast(int64_t i)   {  return (T)(i==0?NULL:((char*)rotHdr + i)); }
+template<class T>
+inline T       RCAST(int64_t i)      {  return (T)(i==0?NULL:((char*)rotHdr + i)); }
+
+#define RCASTV(i) RCAST<void*>(i)
+
+template<class T>
+inline T       RCAST_f(int64_t i) {  return (T)((char*)rotHdr + i); } /* fast version, no check */
+
+inline int64_t RADDR(void *p)        {  return (int64_t)((char*)p - (char*)rotHdr); }
+inline int64_t rot_addr(void *p)     {  return (int64_t)((char*)p - (char*)rotHdr); }
+
 size_t zmalloc_used_memory(void);
 void zmalloc_enable_thread_safeness(void);
 void zmalloc_set_oom_handler(void (*oom_handler)(size_t));
@@ -85,3 +111,4 @@ size_t zmalloc_size(void *ptr);
 #endif
 
 #endif /* __ZMALLOC_H */
+#endif

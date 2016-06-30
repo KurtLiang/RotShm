@@ -40,7 +40,7 @@ robj *createObject(int type, void *ptr) {
     robj *o = (robj*)zmalloc(sizeof(*o));
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
-    o->ptr = ptr;
+    o->ptr = RADDR(ptr);
     o->refcount = 1;
 
     /* Set the LRU to the current lruclock (minutes resolution). */
@@ -63,7 +63,7 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
 
     o->type = OBJ_STRING;
     o->encoding = OBJ_ENCODING_EMBSTR;
-    o->ptr = sh+1;
+    o->ptr = RADDR(sh+1);
     o->refcount = 1;
     o->lru = LRU_CLOCK();
 
@@ -102,7 +102,7 @@ robj *createStringObjectFromLongLong(long long value) {
         if (value >= LONG_MIN && value <= LONG_MAX) {
             o = createObject(OBJ_STRING, NULL);
             o->encoding = OBJ_ENCODING_INT;
-            o->ptr = (void*)((long)value);
+            o->ptr = ((long)value);
         } else {
             o = createObject(OBJ_STRING,sdsfromlonglong(value));
         }
@@ -256,7 +256,7 @@ void freeSetObject(robj *o) {
         dictRelease((dict*) o->ptr);
         break;
     case OBJ_ENCODING_INTSET:
-        zfree(o->ptr);
+        rot_zfree(o->ptr);
         break;
     default:
         serverPanic("Unknown set encoding type");
@@ -273,7 +273,7 @@ void freeZsetObject(robj *o) {
         zfree(zs);
         break;
     case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
+        rot_zfree(o->ptr);
         break;
     default:
         serverPanic("Unknown sorted set encoding");
@@ -283,10 +283,10 @@ void freeZsetObject(robj *o) {
 void freeHashObject(robj *o) {
     switch (o->encoding) {
     case OBJ_ENCODING_HT:
-        dictRelease((dict*) o->ptr);
+        dictRelease(RCAST<dict*>(o->ptr));
         break;
     case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
+        rot_zfree(o->ptr);
         break;
     default:
         serverPanic("Unknown hash encoding type");
@@ -400,7 +400,7 @@ robj *tryObjectEncoding(robj *o) {
         } else {
             if (o->encoding == OBJ_ENCODING_RAW) sdsfree((sds)o->ptr);
             o->encoding = OBJ_ENCODING_INT;
-            o->ptr = (void*) value;
+            o->ptr = value;
             return o;
         }
     }
@@ -430,7 +430,7 @@ robj *tryObjectEncoding(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW &&
         sdsavail(s) > len/10)
     {
-        o->ptr = sdsRemoveFreeSpace((sds)o->ptr);
+        o->ptr = RADDR(sdsRemoveFreeSpace(RCAST<sds>(o->ptr)));
     }
 
     /* Return the original object. */
@@ -699,7 +699,7 @@ unsigned long long estimateObjectIdleTime(robj *o) {
 robj *objectCommandLookup(client *c, robj *key) {
     dictEntry *de;
 
-    if ((de = dictFind(c->db->dict_,key->ptr)) == NULL) return NULL;
+    if ((de = dictFind(c->db->dict_, RCASTV(key->ptr))) == NULL) return NULL;
     return (robj*) dictGetVal(de);
 }
 

@@ -55,7 +55,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "dict.h"    /* Hash tables */
 #include "adlist.h"  /* Linked lists */
 #include "zmalloc.h" /* total memory usage aware version of malloc/free */
-#include "anet.h"    /* Networking the easy way */
 #include "ziplist.h" /* Compact list data structure */
 #include "intset.h"  /* Compact integer set structure */
 #include "version.h" /* Version macro */
@@ -469,7 +468,7 @@ typedef struct redisObject {
     unsigned encoding:4;
     unsigned lru:LRU_BITS; /* lru time (relative to server.lruclock) */
     int refcount;
-    void *ptr;
+    int64_t ptr; //void *ptr;
 } robj;
 
 /* Macro used to obtain the current LRU clock.
@@ -747,7 +746,6 @@ struct redisServer {
     client *current_client; /* Current client, only used on crash report */
     int clients_paused;         /* True if clients are currently paused */
     mstime_t clients_pause_end_time; /* Time when we undo clients_paused */
-    char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
     dict *migrate_cached_sockets;/* MIGRATE cached sockets */
     uint64_t next_client_id;    /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
@@ -943,15 +941,7 @@ struct redisServer {
     dlist *pubsub_patterns; /* A list of pubsub_patterns */
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
-    /* Cluster */
-    int cluster_enabled;      /* Is cluster enabled? */
-    mstime_t cluster_node_timeout; /* Cluster node timeout. */
-    char *cluster_configfile; /* Cluster auto-generated config file name. */
-    struct clusterState *cluster;  /* State of the cluster */
-    int cluster_migration_barrier; /* Cluster replicas migration barrier. */
-    int cluster_slave_validity_factor; /* Slave max data age for failover. */
-    int cluster_require_full_coverage; /* If true, put the cluster down if
-                                          there is at least an uncovered slot.*/
+
     /* Scripting */
     lua_State *lua; /* The Lua interpreter. We use just one for all clients */
     client *lua_client;   /* The "fake client" to query Redis from Lua */
@@ -1261,8 +1251,6 @@ void startLoading(FILE *fp);
 void loadingProgress(off_t pos);
 void stopLoading(void);
 
-/* RDB persistence */
-#include "rdb.h"
 
 /* AOF persistence */
 void flushAppendOnlyFile(int force);
@@ -1423,9 +1411,6 @@ long long emptyDb(void(callback)(void*));
 int selectDb(client *c, int id);
 void signalModifiedKey(redisDb *db, robj *key);
 void signalFlushedDb(int dbid);
-unsigned int getKeysInSlot(unsigned int hashslot, robj **keys, unsigned int count);
-unsigned int countKeysInSlot(unsigned int hashslot);
-unsigned int delKeysInSlot(unsigned int hashslot);
 int verifyClusterConfigWithData(void);
 void scanGenericCommand(client *c, robj *o, unsigned long cursor);
 int parseScanCursorOrReply(client *c, robj *o, unsigned long *cursor);
@@ -1438,14 +1423,6 @@ int *evalGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *sortGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 int *migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, int *numkeys);
 
-/* Cluster */
-void clusterInit(void);
-unsigned short crc16(const char *buf, int len);
-unsigned int keyHashSlot(char *key, int keylen);
-void clusterCron(void);
-void clusterPropagatePublish(robj *channel, robj *message);
-void migrateCloseTimedoutSockets(void);
-void clusterBeforeSleep(void);
 
 /* Sentinel */
 void initSentinelConfig(void);

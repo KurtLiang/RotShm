@@ -28,9 +28,7 @@
  */
 
 #include "server.h"
-#include "cluster.h"
 #include "slowlog.h"
-#include "bio.h"
 #include "latency.h"
 
 #include <time.h>
@@ -428,7 +426,7 @@ void exitFromChild(int retcode) {
 void dictVanillaFree(void *privdata, void *val)
 {
     DICT_NOTUSED(privdata);
-    zfree(val);
+    rot_zfree_p(val);
 }
 
 void dictListDestructor(void *privdata, void *val)
@@ -478,12 +476,12 @@ int dictObjKeyCompare(void *privdata, const void *key1,
         const void *key2)
 {
     const robj *o1 = (const robj *)key1, *o2 = (const robj *)key2;
-    return dictSdsKeyCompare(privdata,o1->ptr,o2->ptr);
+    return dictSdsKeyCompare(privdata, RCASTV(o1->ptr), RCASTV(o2->ptr));
 }
 
 unsigned int dictObjHash(const void *key) {
     const robj *o = (const robj*)key;
-    return dictGenHashFunction(o->ptr, sdslen((sds)o->ptr));
+    return dictGenHashFunction(RCASTV(o->ptr), sdslen(RCAST<sds>(o->ptr)));
 }
 
 unsigned int dictSdsHash(const void *key) {
@@ -506,7 +504,7 @@ int dictEncObjKeyCompare(void *privdata, const void *key1,
 
     o1 = getDecodedObject(o1);
     o2 = getDecodedObject(o2);
-    cmp = dictSdsKeyCompare(privdata,o1->ptr,o2->ptr);
+    cmp = dictSdsKeyCompare(privdata, RCASTV(o1->ptr), RCASTV(o2->ptr));
     decrRefCount(o1);
     decrRefCount(o2);
     return cmp;
@@ -516,7 +514,8 @@ unsigned int dictEncObjHash(const void *key) {
     robj *o = (robj*) key;
 
     if (sdsEncodedObject(o)) {
-        return dictGenHashFunction(o->ptr, sdslen((sds)o->ptr));
+        sds s = RCAST<sds>(o->ptr);
+        return dictGenHashFunction(s, sdslen(s));
     } else {
         if (o->encoding == OBJ_ENCODING_INT) {
             char buf[32];
@@ -528,7 +527,8 @@ unsigned int dictEncObjHash(const void *key) {
             unsigned int hash;
 
             o = getDecodedObject(o);
-            hash = dictGenHashFunction(o->ptr, sdslen((sds)o->ptr));
+            sds s = RCAST<sds>(o->ptr);
+            hash = dictGenHashFunction(s, sdslen(s));
             decrRefCount(o);
             return hash;
         }
@@ -742,7 +742,7 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
         record.sKey = (sds)keyobj->ptr;
         record.oVal = NULL;
 
-        dictEntry *de = dictFind(db->dict_, keyobj->ptr);
+        dictEntry *de = dictFind(db->dict_, RCASTV(keyobj->ptr));
         if (de) record.oVal = (robj*)dictGetVal(de);
 
         server.todo_of.expired_fn(record);
@@ -935,102 +935,9 @@ long long getInstantaneousMetric(int metric) {
     return sum / STATS_METRIC_SAMPLES;
 }
 
-/* Check for timeouts. Returns non-zero if the client was terminated.
- * The function gets the current time in milliseconds as argument since
- * it gets called multiple times in a loop, so calling gettimeofday() for
- * each iteration would be costly without any actual gain. */
-int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
-    time_t now = now_ms/1000;
 
-    if (server.maxidletime &&
-        !(c->flags & CLIENT_SLAVE) &&    /* no timeout for slaves */
-        !(c->flags & CLIENT_MASTER) &&   /* no timeout for masters */
-        !(c->flags & CLIENT_BLOCKED) &&  /* no timeout for BLPOP */
-        !(c->flags & CLIENT_PUBSUB) &&   /* no timeout for Pub/Sub clients */
-        (now - c->lastinteraction > server.maxidletime))
-    {
-        serverLog(LL_VERBOSE,"Closing idle client");
-        freeClient(c);
-        return 1;
-    } else if (c->flags & CLIENT_BLOCKED) {
-        /* Blocked OPS timeout is handled with milliseconds resolution.
-         * However note that the actual resolution is limited by
-         * server.hz. */
-
-        if (c->bpop.timeout != 0 && c->bpop.timeout < now_ms) {
-            /* Handle blocking operation specific timeout. */
-            replyToBlockedClientTimedOut(c);
-            unblockClient(c);
-        } else if (server.cluster_enabled) {
-            /* Cluster: handle unblock & redirect of clients blocked
-             * into keys no longer served by this server. */
-            if (clusterRedirectBlockedClientIfNeeded(c))
-                unblockClient(c);
-        }
-    }
-    return 0;
-}
-
-/* The client query buffer is an sds.c string that can end with a lot of
- * free space not used, this function reclaims space if needed.
- *
- * The function always returns 0 as it never terminates the client. */
-int clientsCronResizeQueryBuffer(client *c) {
-    size_t querybuf_size = sdsAllocSize(c->querybuf);
-    time_t idletime = server.unixtime - c->lastinteraction;
-
-    /* There are two conditions to resize the query buffer:
-     * 1) Query buffer is > BIG_ARG and too big for latest peak.
-     * 2) Client is inactive and the buffer is bigger than 1k. */
-    if (((querybuf_size > PROTO_MBULK_BIG_ARG) &&
-         (querybuf_size/(c->querybuf_peak+1)) > 2) ||
-         (querybuf_size > 1024 && idletime > 2))
-    {
-        /* Only resize the query buffer if it is actually wasting space. */
-        if (sdsavail(c->querybuf) > 1024) {
-            c->querybuf = sdsRemoveFreeSpace(c->querybuf);
-        }
-    }
-    /* Reset the peak again to capture the peak memory usage in the next
-     * cycle. */
-    c->querybuf_peak = 0;
-    return 0;
-}
 
 #define CLIENTS_CRON_MIN_ITERATIONS 5
-void clientsCron(void) {
-    /* Make sure to process at least numclients/server.hz of clients
-     * per call. Since this function is called server.hz times per second
-     * we are sure that in the worst case we process all the clients in 1
-     * second. */
-    int numclients = listLength(server.clients);
-    int iterations = numclients/server.hz;
-    mstime_t now = mstime();
-
-    /* Process at least a few clients while we are at it, even if we need
-     * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
-     * of processing each client once per second. */
-    if (iterations < CLIENTS_CRON_MIN_ITERATIONS)
-        iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ?
-                     numclients : CLIENTS_CRON_MIN_ITERATIONS;
-
-    while(listLength(server.clients) && iterations--) {
-        client *c;
-        listNode *head;
-
-        /* Rotate the list, take the current head, process.
-         * This way if the client must be removed from the list it's the
-         * first element and we don't incur into O(N) computation. */
-        listRotate(server.clients);
-        head = listFirst(server.clients);
-        c = (client*)listNodeValue(head);
-        /* The following functions do different service checks on the client.
-         * The protocol is that they return non-zero if the client was
-         * terminated. */
-        if (clientsCronHandleTimeout(c,now)) continue;
-        if (clientsCronResizeQueryBuffer(c)) continue;
-    }
-}
 
 /* This function handles 'background' operations we are required to do
  * incrementally in Redis databases, such as active key expiring, resizing,
@@ -1181,7 +1088,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* We need to do a few operations on clients asynchronously. */
-    clientsCron();
+    //clientsCron();
 
     /* Handle background operations on Redis databases. */
     databasesCron();
@@ -1194,6 +1101,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         rewriteAppendOnlyFileBackground();
     }
 
+#if 0
     /* Check if a background saving or AOF rewrite in progress terminated. */
     if (server.rdb_child_pid != -1 || server.aof_child_pid != -1 ||
         ldbPendingChildren())
@@ -1264,6 +1172,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             }
          }
     }
+#endif
 
 
     /* AOF postponed flush: Try at every cron cycle if the slow fsync
@@ -1289,19 +1198,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * to detect transfer failures. */
     run_with_period(1000) replicationCron();
 
-    /* Run the Redis Cluster cron. */
-    run_with_period(100) {
-        if (server.cluster_enabled) clusterCron();
-    }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
     run_with_period(100) {
         if (server.sentinel_mode) sentinelTimer();
-    }
-
-    /* Cleanup expired MIGRATE cached sockets. */
-    run_with_period(1000) {
-        migrateCloseTimedoutSockets();
     }
 
     server.cronloops++;
@@ -1313,12 +1213,6 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
  * for ready file descriptors. */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
-
-    /* Call the Redis Cluster before sleep function. Note that this function
-     * may change the state of Redis Cluster (from ok to fail or vice versa),
-     * so it's a good idea to call it before serving the unblocked clients
-     * later in this function. */
-    if (server.cluster_enabled) clusterBeforeSleep();
 
     /* Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
@@ -1526,12 +1420,7 @@ void initServerConfig(int redis_on_taf) {
     server.repl_timeout = CONFIG_DEFAULT_REPL_TIMEOUT;
     server.repl_min_slaves_to_write = CONFIG_DEFAULT_MIN_SLAVES_TO_WRITE;
     server.repl_min_slaves_max_lag = CONFIG_DEFAULT_MIN_SLAVES_MAX_LAG;
-    server.cluster_enabled = 0;
-    server.cluster_node_timeout = CLUSTER_DEFAULT_NODE_TIMEOUT;
-    server.cluster_migration_barrier = CLUSTER_DEFAULT_MIGRATION_BARRIER;
-    server.cluster_slave_validity_factor = CLUSTER_DEFAULT_SLAVE_VALIDITY;
-    server.cluster_require_full_coverage = CLUSTER_DEFAULT_REQUIRE_FULL_COVERAGE;
-    server.cluster_configfile = zstrdup(CONFIG_DEFAULT_CLUSTER_CONFIG_FILE);
+
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.loading_process_events_interval_bytes = (1024*1024*2);
@@ -1770,6 +1659,9 @@ void checkTcpBacklogSettings(void) {
  * impossible to bind, or no bind addresses were specified in the server
  * configuration but the function is not able to bind * for at least
  * one of the IPv4 or IPv6 protocols. */
+#if 1
+int listenToPort(int, int *, int *) { return 0; }
+#else
 int listenToPort(int port, int *fds, int *count) {
     int j;
 
@@ -1819,6 +1711,7 @@ int listenToPort(int port, int *fds, int *count) {
     }
     return C_OK;
 }
+#endif
 
 /* Resets the stats that we expose via INFO or other means that we want
  * to reset via CONFIG RESETSTAT. The function is also used in order to
@@ -1894,6 +1787,7 @@ void initServer(int redis_on_taf) {
     }
     server.db = (redisDb*)zmalloc(sizeof(redisDb)*server.dbnum);
 
+#ifndef REDIS_ON_TAF
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
@@ -1911,7 +1805,6 @@ void initServer(int redis_on_taf) {
         anetNonBlock(NULL,server.sofd);
     }
 
-#ifndef REDIS_ON_TAF
     /* Abort if there are no listening sockets at all. */
     if (server.ipfd_count == 0 && server.sofd < 0) {
         serverLog(LL_WARNING, "Configured to not listen anywhere, exiting.");
@@ -2009,17 +1902,14 @@ void initServer(int redis_on_taf) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
-    if (server.cluster_enabled) clusterInit();
-
     latencyMonitorInit();
 
-    if (!redis_on_taf)
-    {
-        replicationScriptCacheInit();
-        scriptingInit(1);
-        slowlogInit();
-        bioInit();
-    }
+#if 0
+    replicationScriptCacheInit();
+    scriptingInit(1);
+    slowlogInit();
+    bioInit();
+#endif
 }
 
 /* Populates the Redis Command Table starting from the hard coded list
@@ -2406,6 +2296,7 @@ int processCommand(client *c) {
         return C_OK;
     }
 
+#if 0
     /* If cluster is enabled perform the cluster redirection here.
      * However we don't perform the redirection if:
      * 1) The sender of this command is our master.
@@ -2431,6 +2322,7 @@ int processCommand(client *c) {
             return C_OK;
         }
     }
+#endif
 
     /* Handle the maxmemory directive.
      *
@@ -2566,8 +2458,7 @@ void closeListeningSockets(int unlink_unix_socket) {
 
     for (j = 0; j < server.ipfd_count; j++) close(server.ipfd[j]);
     if (server.sofd != -1) close(server.sofd);
-    if (server.cluster_enabled)
-        for (j = 0; j < server.cfd_count; j++) close(server.cfd[j]);
+
     if (unlink_unix_socket && server.unixsocket) {
         serverLog(LL_NOTICE,"Removing the unix socket file.");
         unlink(server.unixsocket); /* don't care if this fails */
@@ -2575,6 +2466,8 @@ void closeListeningSockets(int unlink_unix_socket) {
 }
 
 int prepareForShutdown(int flags) {
+    UNUSED(flags);
+#if 0
     int save = flags & SHUTDOWN_SAVE;
     int nosave = flags & SHUTDOWN_NOSAVE;
 
@@ -2640,6 +2533,7 @@ int prepareForShutdown(int flags) {
     closeListeningSockets(1);
     serverLog(LL_WARNING,"%s is now ready to exit, bye bye...",
         server.sentinel_mode ? "Sentinel" : "Redis");
+#endif
     return C_OK;
 }
 
@@ -2786,6 +2680,7 @@ void addReplyCommand(client *c, struct redisCommand *cmd) {
 }
 
 /* COMMAND <subcommand> <args> */
+#ifndef REDIS_ON_TAF
 void commandCommand(client *c) {
     dictIterator *di;
     dictEntry *de;
@@ -2828,6 +2723,7 @@ void commandCommand(client *c) {
         return;
     }
 }
+#endif
 
 /* Convert an amount of bytes into a human readable string in the form
  * of 100B, 2G, 100M, 4K, and so forth. */
@@ -2885,8 +2781,7 @@ sds genRedisInfoString(const char *section) {
         static struct utsname name;
         const char *mode;
 
-        if (server.cluster_enabled) mode = "cluster";
-        else if (server.sentinel_mode) mode = "sentinel";
+        if (server.sentinel_mode) mode = "sentinel";
         else mode = "standalone";
 
         if (sections++) info = sdscat(info,"\r\n");
@@ -3019,6 +2914,7 @@ sds genRedisInfoString(const char *section) {
     }
 
     /* Persistence */
+#if 0
     if (allsections || defsections || !strcasecmp(section,"persistence")) {
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info,
@@ -3103,6 +2999,7 @@ sds genRedisInfoString(const char *section) {
             );
         }
     }
+#endif
 
     /* Stats */
     if (allsections || defsections || !strcasecmp(section,"stats")) {
@@ -3149,6 +3046,7 @@ sds genRedisInfoString(const char *section) {
             dictSize(server.migrate_cached_sockets));
     }
 
+#if 0
     /* Replication */
     if (allsections || defsections || !strcasecmp(section,"replication")) {
         if (sections++) info = sdscat(info,"\r\n");
@@ -3266,6 +3164,7 @@ sds genRedisInfoString(const char *section) {
             server.repl_backlog_off,
             server.repl_backlog_histlen);
     }
+#endif
 
     /* CPU */
     if (allsections || defsections || !strcasecmp(section,"cpu")) {
@@ -3298,14 +3197,6 @@ sds genRedisInfoString(const char *section) {
         }
     }
 
-    /* Cluster */
-    if (allsections || defsections || !strcasecmp(section,"cluster")) {
-        if (sections++) info = sdscat(info,"\r\n");
-        info = sdscatprintf(info,
-        "# Cluster\r\n"
-        "cluster_enabled:%d\r\n",
-        server.cluster_enabled);
-    }
 
     /* Key space */
     if (allsections || defsections || !strcasecmp(section,"keyspace")) {
@@ -3615,10 +3506,10 @@ int freeMemoryIfNeeded(void) {
                 if (server.todo_of.evicted_fn)
                 {
                     RotDataRecord record;
-                    record.sKey = (sds)keyobj->ptr;
+                    record.sKey = RCAST<sds>(keyobj->ptr);
                     record.oVal = NULL;
 
-                    dictEntry *de = dictFind(db->dict_, keyobj->ptr);
+                    dictEntry *de = dictFind(db->dict_, record.sKey);
                     if (de) record.oVal = (robj*)dictGetVal(de);
 
                     server.todo_of.evicted_fn(record);
@@ -3747,8 +3638,7 @@ void redisAsciiArt(void) {
     char *buf = (char*)zmalloc(1024*16);
     const char *mode;
 
-    if (server.cluster_enabled) mode = "cluster";
-    else if (server.sentinel_mode) mode = "sentinel";
+    if (server.sentinel_mode) mode = "sentinel";
     else mode = "standalone";
 
     if (server.syslog_enabled) {
@@ -3795,7 +3685,9 @@ static void sigShutdownHandler(int sig) {
      * on disk. */
     if (server.shutdown_asap && sig == SIGINT) {
         serverLogFromHandler(LL_WARNING, "You insist... exiting now.");
+#if 0
         rdbRemoveTempFile(getpid());
+#endif
         exit(1); /* Exit with an error since this was not a clean shutdown. */
     } else if (server.loading) {
         exit(0);
@@ -3843,6 +3735,7 @@ int checkForSentinelMode(int argc, char **argv) {
 
 /* Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {
+#if 0
     long long start = ustime();
     if (server.aof_state == AOF_ON) {
         if (loadAppendOnlyFile(server.aof_filename) == C_OK)
@@ -3856,6 +3749,7 @@ void loadDataFromDisk(void) {
             exit(1);
         }
     }
+#endif
 }
 
 void redisOutOfMemoryHandler(size_t allocation_size) {
@@ -3867,8 +3761,7 @@ void redisOutOfMemoryHandler(size_t allocation_size) {
 void redisSetProcTitle(const char *title) {
 #ifdef USE_SETPROCTITLE
     const char *server_mode = "";
-    if (server.cluster_enabled) server_mode = " [cluster]";
-    else if (server.sentinel_mode) server_mode = " [sentinel]";
+    if (server.sentinel_mode) server_mode = " [sentinel]";
 
     setproctitle("%s %s:%d%s",
         title,

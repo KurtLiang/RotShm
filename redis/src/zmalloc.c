@@ -421,3 +421,44 @@ size_t zmalloc_get_memory_size(void) {
 }
 
 
+//TODO @Kurt
+#ifndef UNUSED
+#define UNUSED(v)   (void)(v)
+#endif
+
+size_t rot_zmalloc(size_t size)
+{
+    //TODO
+    //
+
+    UNUSED(size);
+
+    return 0;
+}
+size_t rot_zcalloc(size_t)
+{
+    //TODO
+
+    return 0;
+}
+size_t rot_zrealloc(size_t, size_t)
+{
+    //TODO
+
+    return 0;
+}
+void   rot_zfree(size_t)
+{
+    //TODO
+
+
+}
+
+size_t rot_zstrdup(const char *)
+{
+    //TODO
+
+    return 0;
+}
+
+
