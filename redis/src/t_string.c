@@ -231,8 +231,8 @@ void setrangeCommand(client *c) {
     }
 
     if (sdslen(value) > 0) {
-        o->ptr = sdsgrowzero((sds)o->ptr,offset+sdslen(value));
-        memcpy((char*)o->ptr+offset,value,sdslen(value));
+        o->ptr = RADDR(sdsgrowzero(RCAST<sds>(o->ptr),offset+sdslen(value)));
+        memcpy((char*)RCASTV(o->ptr)+offset, value, sdslen(value));
         signalModifiedKey(c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,
             "setrange",c->argv[1],c->db->id);
@@ -355,7 +355,7 @@ void incrDecrCommand(client *c, long long incr) {
         value >= LONG_MIN && value <= LONG_MAX)
     {
         new_o = o;
-        o->ptr = (void*)((long)value);
+        o->ptr = value;
     } else {
         new_o = createStringObjectFromLongLong(value);
         if (o) {
@@ -452,8 +452,8 @@ void appendCommand(client *c) {
 
         /* Append the value */
         o = dbUnshareStringValue(c->db,c->argv[1],o);
-        o->ptr = sdscatlen((sds)o->ptr,append->ptr,sdslen((sds)append->ptr));
-        totlen = sdslen((sds)o->ptr);
+        o->ptr = RADDR(sdscatlen(RCASTS(o->ptr), RCASTS(append->ptr), sdslen(RCASTS(append->ptr))));
+        totlen = sdslen(RCASTS(o->ptr));
     }
     signalModifiedKey(c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING,"append",c->argv[1],c->db->id);

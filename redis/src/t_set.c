@@ -119,7 +119,7 @@ int setTypeIsMember(robj *subject, robj *value) {
 }
 
 setTypeIterator *setTypeInitIterator(robj *subject) {
-    setTypeIterator *si = (setTypeIterator*)zmalloc(sizeof(setTypeIterator));
+    setTypeIterator *si = (setTypeIterator*)rot_zmalloc_p(sizeof(setTypeIterator));
     si->subject = subject;
     si->encoding = subject->encoding;
     if (si->encoding == OBJ_ENCODING_HT) {
@@ -135,7 +135,7 @@ setTypeIterator *setTypeInitIterator(robj *subject) {
 void setTypeReleaseIterator(setTypeIterator *si) {
     if (si->encoding == OBJ_ENCODING_HT)
         dictReleaseIterator(si->di);
-    zfree(si);
+    rot_zfree_p(si);
 }
 
 /* Move to the next entry in the set. Returns the object at the current
@@ -250,7 +250,7 @@ void setTypeConvert(robj *setobj, int enc) {
         robj *element;
 
         /* Presize the dict to avoid rehashing */
-        dictExpand(d,intsetLen((intset*)setobj->ptr));
+        dictExpand(d, intsetLen(RCAST<intset*>setobj->ptr));
 
         /* To add the elements we extract integers and create redis objects */
         si = setTypeInitIterator(setobj);
@@ -262,8 +262,8 @@ void setTypeConvert(robj *setobj, int enc) {
         setTypeReleaseIterator(si);
 
         setobj->encoding = OBJ_ENCODING_HT;
-        zfree(setobj->ptr);
-        setobj->ptr = d;
+        rot_zfree(setobj->ptr);
+        setobj->ptr = RADDR(d);
     } else {
         serverPanic("Unsupported set conversion");
     }
@@ -706,7 +706,7 @@ void srandmemberWithCountCommand(client *c) {
             dictEntry *de;
 
             de = dictGetRandomKey(d);
-            dictDelete(d,dictGetKey(de));
+            dictDelete(d, RCASTV(dictGetKey(de)));
             size--;
         }
     }
@@ -787,7 +787,7 @@ int qsortCompareSetsByRevCardinality(const void *s1, const void *s2) {
 
 void sinterGenericCommand(client *c, robj **setkeys,
                           unsigned long setnum, robj *dstkey) {
-    robj **sets = (robj**)zmalloc(sizeof(robj*)*setnum);
+    robj **sets = (robj**)rot_zmalloc_p(sizeof(robj*)*setnum);
     setTypeIterator *si;
     robj *eleobj, *dstset = NULL;
     int64_t intobj;
@@ -800,7 +800,7 @@ void sinterGenericCommand(client *c, robj **setkeys,
             lookupKeyWrite(c->db,setkeys[j]) :
             lookupKeyRead(c->db,setkeys[j]);
         if (!setobj) {
-            zfree(sets);
+            rot_zfree_p(sets);
             if (dstkey) {
                 if (dbDelete(c->db,dstkey)) {
                     signalModifiedKey(c->db,dstkey);
@@ -813,7 +813,7 @@ void sinterGenericCommand(client *c, robj **setkeys,
             return;
         }
         if (checkType(c,setobj,OBJ_SET)) {
-            zfree(sets);
+            rot_zfree_p(sets);
             return;
         }
         sets[j] = setobj;
@@ -918,7 +918,7 @@ void sinterGenericCommand(client *c, robj **setkeys,
     } else {
         setDeferredMultiBulkLength(c,replylen,cardinality);
     }
-    zfree(sets);
+    rot_zfree_p(sets);
 }
 
 void sinterCommand(client *c) {
@@ -935,7 +935,7 @@ void sinterstoreCommand(client *c) {
 
 void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
                               robj *dstkey, int op) {
-    robj **sets = (robj**)zmalloc(sizeof(robj*)*setnum);
+    robj **sets = (robj**)rot_zmalloc_p(sizeof(robj*)*setnum);
     setTypeIterator *si;
     robj *ele, *dstset = NULL;
     int j, cardinality = 0;
@@ -950,7 +950,7 @@ void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
             continue;
         }
         if (checkType(c,setobj,OBJ_SET)) {
-            zfree(sets);
+            rot_zfree_p(sets);
             return;
         }
         sets[j] = setobj;
@@ -1089,7 +1089,7 @@ void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
         signalModifiedKey(c->db,dstkey);
         server.dirty++;
     }
-    zfree(sets);
+    rot_zfree_p(sets);
 }
 
 void sunionCommand(client *c) {

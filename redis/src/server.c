@@ -1817,7 +1817,6 @@ void initServer(int redis_on_taf) {
         server.db[j].dict_ = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
-        server.db[j].ready_keys = dictCreate(&setDictType,NULL);
         server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].eviction_pool = evictionPoolAlloc();
         server.db[j].id = j;
@@ -2443,8 +2442,6 @@ int processCommand(client *c) {
     } else {
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
-        if (listLength(server.ready_keys))
-            handleClientsBlockedOnLists();
     }
     return C_OK;
 }

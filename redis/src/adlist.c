@@ -42,7 +42,7 @@ dlist *listCreate(void)
 {
     struct dlist *list;
 
-    if ((list = (struct dlist*)zmalloc(sizeof(*list))) == NULL)
+    if ((list = (struct dlist*)rot_zmalloc_p(sizeof(*list))) == NULL)
         return NULL;
     list->head = list->tail = NULL;
     list->len = 0;
@@ -65,10 +65,10 @@ void listRelease(dlist *list)
     while(len--) {
         next = current->next;
         if (list->free) list->free(current->value);
-        zfree(current);
+        rot_zfree_p(current);
         current = next;
     }
-    zfree(list);
+    rot_zfree_p(list);
 }
 
 /* Add a new node to the list, to head, containing the specified 'value'

@@ -1608,6 +1608,7 @@ static char *genstr(char *prefix, int i) {
 }
 
 /* main test, but callable from other files */
+#if 0
 int quicklistTest(int argc, char *argv[]) {
     UNUSED(argc);
     UNUSED(argv);
@@ -2647,4 +2648,5 @@ int quicklistTest(int argc, char *argv[]) {
 
     return err;
 }
+#endif
 #endif

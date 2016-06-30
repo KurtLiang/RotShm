@@ -73,10 +73,14 @@ void zfree(void *ptr);
 char *zstrdup(const char *s);
 
 size_t rot_zmalloc(size_t size);
+void  *rot_zmalloc_p(size_t size);
+
 size_t rot_zcalloc(size_t size);
 size_t rot_zrealloc(size_t iAddr, size_t size);
+
 void   rot_zfree(size_t addr);
 void   rot_zfree_p(void *ptr);
+
 size_t rot_zstrdup(const char *);
 
 
@@ -89,6 +93,7 @@ template<class T>
 inline T       RCAST(int64_t i)      {  return (T)(i==0?NULL:((char*)rotHdr + i)); }
 
 #define RCASTV(i) RCAST<void*>(i)
+#define RCASTS(i) RCAST<sds>(i)
 
 template<class T>
 inline T       RCAST_f(int64_t i) {  return (T)((char*)rotHdr + i); } /* fast version, no check */
